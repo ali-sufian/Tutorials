@@ -109,7 +109,8 @@ sudo mount -t lustre /dev/nvme0n3 /mnt/ost
 Verify the mounts:
 
 ```bash
-df -h | grep lustre
+df -h | grep mdt
+df -h | grep ost
 ```
 
 ## **8. Install Lustre Client**
@@ -126,7 +127,7 @@ Replace `<MGS_IP>` with `node1-lstr-server`'s IP:
 
 ```bash
 sudo mkdir -p /mnt/lustre
-sudo mount -t lustre <MGS_IP>@tcp:/lustre /mnt/lustre
+sudo mount -t lustre <MGS_IP>@tcp:/lustrefs /mnt/lustre
 ```
 
 Verify:
