@@ -25,7 +25,9 @@ This guide provides a step-by-step process to set up a production-grade, air-gap
 On one of your nodes (e.g., `node1`), run:
 
 ```bash
-# podman run -d -p 5000:5000 --restart=always --name registry   -v /opt/registry:/var/lib/registry   registry:2
+# podman run -d --name airgap-registry -p 5000:5000 \
+    -v ./registry:/var/lib/registry \
+    --restart=always docker.io/library/registry:2
 ```
 
 Verify the registry is accessible:
