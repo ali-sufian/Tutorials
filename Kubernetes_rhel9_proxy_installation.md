@@ -18,6 +18,10 @@ This guide provides a step-by-step process to set up a production-grade, air-gap
 
 ## Step 1: Set Up a Local Container Registry
 
+mkdir -p /opt/airgap/k8s-1.33/{packages,images,registry}
+cd /opt/airgap/k8s-1.33
+yum install -y podman skopeo jq
+
 On one of your nodes (e.g., `node1`), run:
 
 ```bash
