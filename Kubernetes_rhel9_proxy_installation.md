@@ -36,49 +36,111 @@ curl http://localhost:5000/v2/_catalog
 
 ## Step 2: Download Kubernetes Images on an Internet-Connected Machine
 
-Run the following on a machine with internet:
+Tell Podman to use insecure (HTTP) registry for localhost:5000
+mkdir -p /etc/containers
+nano /etc/containers/registries.conf
+unqualified-search-registries = ["registry.k8s.io"]
 
-```bash
-export K8S_VER="v1.29.0"
+[[registry]]
+location = "localhost:5000"
+insecure = true
 
-IMAGES=(
-  kube-apiserver:$K8S_VER
-  kube-controller-manager:$K8S_VER
-  kube-scheduler:$K8S_VER
-  kube-proxy:$K8S_VER
-  pause:3.9
-  etcd:3.5.10-0
-  coredns/coredns:v1.11.1
-)
+systemctl restart containerd
 
-for img in "${IMAGES[@]}"; do
-  docker pull registry.k8s.io/${img}
-  docker tag registry.k8s.io/${img} localhost:5000/${img}
-  docker push localhost:5000/${img}
+
+
+#!/bin/bash
+
+# Set Kubernetes version
+K8S_VERSION="v1.33.0"
+
+# Pull images using kubeadm
+echo "Pulling Kubernetes images for version $K8S_VERSION..."
+kubeadm config images pull --kubernetes-version="$K8S_VERSION"
+
+# Get list of images
+images=$(kubeadm config images list --kubernetes-version="$K8S_VERSION")
+
+# Loop through each image
+for image in $images; do
+  echo "Processing image: $image"
+
+  # Create safe filename
+  safe_name=$(echo "$image" | sed 's|[/:]|_|g')
+  tar_file="${safe_name}.tar"
+
+  # Export image from containerd
+  echo "Exporting to $tar_file..."
+  ctr -n k8s.io images export "$tar_file" "$image"
+
+  # Import into podman
+  echo "Importing $tar_file into Podman..."
+  podman load -i "$tar_file"
+
+  # Extract image name and tag
+  img_name_tag="${image#*/}"                         # e.g. kube-apiserver:v1.33.0
+  img_name="${img_name_tag%%:*}"                     # e.g. kube-apiserver
+  img_tag="${img_name_tag##*:}"                      # e.g. v1.33.0
+
+  # Tag for local registry
+  local_image="localhost:5000/${img_name}:${img_tag}"
+  echo "Tagging image as $local_image..."
+  podman tag "$image" "$local_image"
+
+  # Push to local registry
+  echo "Pushing $local_image to local registry..."
+  podman push "$local_image"
+
+  echo "✅ Done: $image"
+  echo
 done
-```
 
----
 
 ## Step 3: Export and Transfer Images to Air-Gapped Nodes
 
-Save images as tarballs:
+#!/bin/bash
 
-```bash
-for img in "${IMAGES[@]}"; do
-  docker save -o $(basename ${img}).tar localhost:5000/${img}
+set -e
+
+# Path to your archive
+ARCHIVE="registry.tar.gz"
+
+# Temporary working directory
+WORKDIR="/tmp/registry-restore"
+
+# Create working dir
+mkdir -p "$WORKDIR"
+echo "Extracting $ARCHIVE to $WORKDIR..."
+tar -xzf "$ARCHIVE" -C "$WORKDIR"
+
+# Go into the image blobs directory (assumes docker registry v2 layout)
+REPO_DIR="$WORKDIR/registry/docker/registry/v2/repositories"
+
+# Find all image:tag directories
+echo "Searching for images to load..."
+find "$REPO_DIR" -mindepth 2 -maxdepth 2 -type d | while read -r path; do
+  image_name=$(echo "$path" | sed -E "s|$REPO_DIR/||" | sed 's|/|:|g')
+
+  echo "Restoring $image_name"
+
+  # Docker/Podman pull from the local registry
+  podman pull "localhost:5000/${image_name}"
+
+  # Tag image for containerd (optional but recommended for kubelet)
+  podman tag "localhost:5000/${image_name}" "${image_name}"
+
+  # Save as tarball
+  tarball="/tmp/$(echo "$image_name" | sed 's|[/:]|_|g').tar"
+  podman save -o "$tarball" "${image_name}"
+
+  # Import into containerd so crictl can see it
+  echo "Importing into containerd..."
+  ctr -n k8s.io images import "$tarball"
+
+  echo "✅ Loaded: $image_name"
 done
-```
 
-Transfer these `.tar` files to each air-gapped node and import:
-
-```bash
-for tar in *.tar; do
-  podman load -i $tar
-done
-```
-
----
+echo "All images imported into containerd successfully."
 
 ## Step 4: Prepare kubeadm Config File
 
